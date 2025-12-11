@@ -1,5 +1,6 @@
 import streamlit as st
-import time
+import pandas as pd
+from const import PROVINCES # Import data yang baru dibuat
 
 # Konfigurasi Halaman
 st.set_page_config(
@@ -11,14 +12,38 @@ st.set_page_config(
 # Judul Dashboard
 st.title("🇮🇩 Real-Time Weather Forecasting Stream")
 
-# Placeholder text
-st.write("Selamat datang di dashboard cuaca. Project ini sedang dalam tahap inisialisasi.")
+# --- SIDEBAR ---
+st.sidebar.header("Konfigurasi Lokasi")
 
-# Sidebar simulasi
-st.sidebar.header("Konfigurasi")
-provinsi = st.sidebar.selectbox(
-    "Pilih Provinsi",
-    ["DKI Jakarta", "Jawa Barat", "Jawa Timur", "Bali"] # Nanti kita lengkapi jadi 38
-)
+# Dropdown list provinsi dari data const.py
+nama_provinsi = list(PROVINCES.keys())
+selected_prov = st.sidebar.selectbox("Pilih Provinsi", nama_provinsi)
 
-st.write(f"Menampilkan data untuk: **{provinsi}**")
+# Ambil lat/lon berdasarkan pilihan
+lat = PROVINCES[selected_prov]["lat"]
+lon = PROVINCES[selected_prov]["lon"]
+
+st.sidebar.markdown(f"""
+**Koordinat Terpilih:**
+- Lintang (Lat): `{lat}`
+- Bujur (Lon): `{lon}`
+""")
+
+# --- MAIN CONTENT ---
+# Buat kolom layout (Kiri: Info, Kanan: Peta)
+col1, col2 = st.columns([1, 2])
+
+with col1:
+    st.subheader(f"Cuaca di {selected_prov}")
+    st.info("Sistem siap menerima data stream...")
+    # Nanti kita taruh metrik cuaca disini
+
+with col2:
+    st.subheader("Peta Lokasi")
+    # Siapkan data untuk peta
+    map_data = pd.DataFrame({
+        'lat': [lat],
+        'lon': [lon]
+    })
+    # Tampilkan peta dengan zoom level tertentu
+    st.map(map_data, zoom=6)
