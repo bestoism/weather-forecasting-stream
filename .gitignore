@@ -1,0 +1,3 @@
+.streamlit/
+secrets.toml
+weather_history.csv

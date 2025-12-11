@@ -1,109 +1,90 @@
 import streamlit as st
 import pandas as pd
 import time
-import plotly.express as px 
-import plotly.graph_objects as go # Kita pakai graph_objects agar lebih fleksibel kustomisasinya
+import plotly.express as px
 from const import PROVINCES
-from utils import generate_initial_data, update_weather_data
+from utils import get_real_weather, save_to_csv, load_data_from_csv
 
-# Konfigurasi Halaman
-st.set_page_config(
-    page_title="Weather Stream Indonesia",
-    page_icon="🌦️",
-    layout="wide"
-)
+st.set_page_config(page_title="Real Weather Stream", page_icon="🌤️", layout="wide")
 
-# --- SETUP SESSION STATE & HISTORY ---
-if 'weather_data' not in st.session_state:
-    st.session_state.weather_data = generate_initial_data()
-
-# ### PERUBAHAN STEP 4: Menyiapkan History Data ###
-if 'history_temp' not in st.session_state:
-    st.session_state.history_temp = []
-if 'history_time' not in st.session_state:
-    st.session_state.history_time = []
-
-# Batasi history agar tidak memori penuh (misal simpan 50 data terakhir saja)
-MAX_HISTORY = 50
+st.title("🇮🇩 Live Real-World Weather Monitor")
 
 # --- SIDEBAR ---
-st.sidebar.header("Konfigurasi Lokasi")
-nama_provinsi = list(PROVINCES.keys())
-selected_prov = st.sidebar.selectbox("Pilih Provinsi", nama_provinsi)
-
+st.sidebar.header("Lokasi Monitor")
+selected_prov = st.sidebar.selectbox("Pilih Provinsi", list(PROVINCES.keys()))
 lat = PROVINCES[selected_prov]["lat"]
 lon = PROVINCES[selected_prov]["lon"]
-st.sidebar.markdown(f"**Lat:** `{lat}` | **Lon:** `{lon}`")
-st.sidebar.markdown("---")
-run_stream = st.sidebar.checkbox("🔴 LIVE STREAMING", value=True)
 
-# --- MAIN UI ---
-st.title("🇮🇩 Real-Time Weather Forecasting Stream")
+st.sidebar.write("---")
 
-# Placeholder Containers
-metric_placeholder = st.empty()
-chart_placeholder = st.empty() # Wadah baru untuk grafik
+# Pengaturan Interval Update
+# JANGAN terlalu cepat (misal 1 detik) karena API ada limitnya & data cuaca gak berubah secepat itu.
+# Rekomendasi: 300 detik (5 menit) atau 600 detik (10 menit).
+update_interval = st.sidebar.slider("Update Interval (detik)", min_value=10, max_value=600, value=60)
+is_running = st.sidebar.checkbox("Start Monitoring", value=False)
 
-# Peta (Static)
-with st.expander("🗺️ Lihat Peta Lokasi", expanded=False): # Kita lipat biar hemat tempat
-    map_df = pd.DataFrame({'lat': [lat], 'lon': [lon]})
-    st.map(map_df, zoom=5)
+# --- MAIN DISPLAY ---
+# Placeholder untuk UI
+col_kiri, col_kanan = st.columns([2, 1])
 
-# --- STREAMING LOOP ---
-if run_stream:
-    while True:
-        # 1. Update Data
-        st.session_state.weather_data = update_weather_data(st.session_state.weather_data)
-        current = st.session_state.weather_data
+with col_kanan:
+    st.map(pd.DataFrame({'lat': [lat], 'lon': [lon]}), zoom=6, use_container_width=True)
+
+with col_kiri:
+    metrics_container = st.container()
+    chart_container = st.empty()
+
+# --- FUNGSI UTAMA ---
+def render_ui():
+    # 1. Load Data dari CSV Local
+    df_history = load_data_from_csv(lat, lon)
+    
+    if not df_history.empty:
+        # Ambil data paling baru (baris terakhir)
+        last_data = df_history.iloc[-1]
         
-        # 2. Update History (Append Data Baru)
-        current_time = time.strftime('%H:%M:%S')
-        st.session_state.history_temp.append(current['temperature'])
-        st.session_state.history_time.append(current_time)
-        
-        # Jaga agar list tidak terlalu panjang (FIFO - First In First Out)
-        if len(st.session_state.history_temp) > MAX_HISTORY:
-            st.session_state.history_temp.pop(0)
-            st.session_state.history_time.pop(0)
+        # Tampilkan Metrik
+        with metrics_container:
+            c1, c2, c3, c4 = st.columns(4)
+            c1.metric("Suhu", f"{last_data['temperature']} °C")
+            c2.metric("Kelembaban", f"{last_data['humidity']} %")
+            c3.metric("Angin", f"{last_data['wind_speed']} m/s")
+            c4.metric("Tekanan", f"{last_data['pressure']} hPa")
+            st.caption(f"Last API Fetch: {last_data['timestamp']}")
 
-        # 3. Render Metrik (Angka)
-        with metric_placeholder.container():
-            k1, k2, k3, k4 = st.columns(4)
-            k1.metric("Temperature", f"{current['temperature']} °C")
-            k2.metric("Humidity", f"{current['humidity']} %")
-            k3.metric("Wind Speed", f"{current['wind_speed']} km/h")
-            k4.metric("Pressure", f"{current['pressure']} hPa")
-
-        # 4. Render Grafik (Chart)
-        with chart_placeholder.container():
-            # Kita buat DataFrame sementara dari history
-            df_chart = pd.DataFrame({
-                "Waktu": st.session_state.history_time,
-                "Temperature (°C)": st.session_state.history_temp
-            })
-
-            # Buat Line Chart menggunakan Plotly
-            fig = px.line(
-                df_chart, 
-                x="Waktu", 
-                y="Temperature (°C)", 
-                title=f"Trend Suhu Real-time: {selected_prov}",
-                markers=True
-            )
-            
-            # Mempercantik tampilan grafik
-            fig.update_layout(
-                xaxis_title="Waktu",
-                yaxis_title="Suhu (°C)",
-                yaxis_range=[20, 40], # Kunci range Y agar grafik tidak lompat-lompat skalanya
-                height=400,
-                template="plotly_dark" # Tema gelap biar keren
-            )
-            
+        # Tampilkan Grafik History
+        with chart_container:
+            fig = px.line(df_history, x='timestamp', y='temperature', 
+                          title=f"History Suhu Real: {selected_prov}", markers=True)
+            fig.update_layout(height=350)
             st.plotly_chart(fig, use_container_width=True)
+    else:
+        st.info("Belum ada data history untuk provinsi ini. Silakan mulai monitoring.")
 
-        # 5. Jeda Loop
-        time.sleep(1) # Delay 1 detik
+# --- LOOPING ---
+if is_running:
+    # Placeholder kosong untuk countdown
+    countdown_placeholder = st.empty()
+    
+    while True:
+        # 1. Fetch Data Baru dari API
+        with st.spinner(f"Mengambil data real-time dari {selected_prov}..."):
+            new_data = get_real_weather(lat, lon)
+            if new_data:
+                save_to_csv(new_data) # Simpan ke CSV
+        
+        # 2. Render Ulang UI (Baca dari CSV yang baru diupdate)
+        render_ui()
+        
+        # 3. Countdown Timer (Supaya user tau kapan update berikutnya)
+        for i in range(update_interval, 0, -1):
+            countdown_placeholder.text(f"⏳ Mengambil data lagi dalam {i} detik...")
+            time.sleep(1)
+            
+        # Clear ulang untuk loop berikutnya
+        countdown_placeholder.empty() 
 
 else:
-    st.warning("Stream dimatikan.")
+    # Jika tidak running, tetap tampilkan data terakhir yang ada di CSV (jika ada)
+    render_ui()
+    st.warning("Monitoring dimatikan. Klik 'Start Monitoring' di sidebar.")
